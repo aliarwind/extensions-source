@@ -98,8 +98,23 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
         return Observable.just(listOf(chapter))
     }
 
+    companion object {
+        val TITLE_AUTHOR_REGEX: Regex = Regex("\\[(.*?)]")
+        val ONLY_ALPHA_REGEX: Regex = Regex("^[a-zA-Z]$")
+        val ONLY_NUMBER_REGEX: Regex = Regex("^\\d+$")
+        val TAGS_FILTER_REGEX_LIST = listOf(ONLY_NUMBER_REGEX, ONLY_ALPHA_REGEX)
+        val TAGS_EXCLUDE_LIST = listOf("yyy", "xxx")
+    }
     override fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
+        val tags = document.select("div.uwconn a.tagshow")
+            .takeIf { it.isNotEmpty() }
+            ?.map { it.text().trim() }
+        val filterTags = tags?.filter { tag ->
+            val isMatch = TAGS_FILTER_REGEX_LIST.any { regex -> tag.matches(regex) }
+            // 排除符合正則表達式的 tag 和預設列表中的 tag
+            !isMatch && !TAGS_EXCLUDE_LIST.contains(tag)
+        }
         manga.title = document.selectFirst("h2")?.text() ?: "Unknown"
         manga.artist = document.selectFirst("div.uwuinfo p")?.text() ?: "Unknown"
         manga.author = document.selectFirst("div.uwuinfo p")?.text() ?: "Unknown"
@@ -107,8 +122,13 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
             "http:" + document.selectFirst("div.uwthumb img")!!.attr("src")
         manga.description =
             document.selectFirst("div.asTBcell p")?.html()?.replace("<br>", "\n")
-
+        manga.genre = filterTags?.joinToString(", ") { it.trim() }
         manga.status = SManga.COMPLETED
+        val titleAuthor = TITLE_AUTHOR_REGEX.find(manga.title)?.groupValues?.get(1)
+        if (tags?.any { tag -> titleAuthor?.contains(tag) == true } == true) {
+            manga.artist = titleAuthor
+            manga.author = titleAuthor
+        }
         return manga
     }
 

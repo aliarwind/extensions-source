@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.extension.zh.wnacg
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.Interceptor
@@ -9,7 +10,7 @@ import okhttp3.Response
 import java.io.IOException
 import kotlin.random.Random
 
-private const val DEFAULT_LIST = "https://www.wn01.uk,https://www.wn05.cc,https://www.wn04.cc,https://www.wn03.cc"
+private const val DEFAULT_LIST = "https://www.wnacg01.cc,https://www.wn05.cc,https://www.wn04.cc,https://www.wn03.cc"
 
 fun getPreferencesInternal(
     context: Context,
@@ -26,10 +27,21 @@ fun getPreferencesInternal(
         entries = options.toTypedArray()
         entryValues = Array(count, Int::toString)
     },
+    EditTextPreference(context).apply {
+        key = INPUT_URL_PREF
+        title = "輸入網址"
+        setOnPreferenceChangeListener { _, newValue ->
+            preferences.edit().putString(key, newValue as String).commit()
+        }
+    },
 )
 
 val SharedPreferences.baseUrl: String
     get() {
+        val inputUrl = getString(INPUT_URL_PREF, "")?.trim()
+        if (!inputUrl.isNullOrBlank()) {
+            return inputUrl
+        }
         val list = urlList
         return list.getOrNull(urlIndex) ?: list[0]
     }
@@ -107,3 +119,4 @@ class UpdateUrlInterceptor(private val preferences: SharedPreferences) : Interce
 private const val DEFAULT_LIST_PREF = "defaultBaseUrl"
 private const val URL_LIST_PREF = "baseUrlList"
 private const val URL_INDEX_PREF = "baseUrlIndex"
+private const val INPUT_URL_PREF = "inputUrl"
