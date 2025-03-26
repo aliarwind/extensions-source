@@ -39,8 +39,6 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
         }
     }
 
-
-
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(updateUrlInterceptor)
         .build()
@@ -133,15 +131,38 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
             document.selectFirst("div.asTBcell p")?.html()?.replace("<br>", "\n")
         manga.genre = filterTags?.joinToString(", ") { it.trim() }
         manga.status = SManga.COMPLETED
-        val titleAuthor = TITLE_AUTHOR_REGEX.find(manga.title)?.groupValues?.get(1)
-        if (tags?.any { tag -> titleAuthor?.contains(tag) == true } == true) {
+        toCompleteAuthor(manga, tags)
+        return manga
+    }
+
+    private fun toCompleteAuthor(
+        manga: SManga,
+        tags: List<String>?,
+    ) {
+        val titleParams = TITLE_AUTHOR_REGEX.find(manga.title)?.groupValues ?: emptyList()
+        val titleAuthor = titleParams.get(1)
+        tags?.any { tag -> titleAuthor.contains(tag) }?.let {
             manga.artist = titleAuthor
             manga.author = titleAuthor
         }
-        if (manga.author == null){
-            authorRepository.findAuthorByName("")
+        if (manga.author == null) {
+            val matchedAuthor = titleParams.asSequence()
+                .mapNotNull { name -> authorRepository.findAuthorByName(name) }
+                .firstOrNull()
+            matchedAuthor?.let {
+                manga.author = it.name
+                manga.artist = it.name
+            }
         }
-        return manga
+        if (manga.author == null) {
+            val matchedAuthor = tags?.asSequence()
+                ?.mapNotNull { name -> authorRepository.findAuthorByName(name) }
+                ?.firstOrNull()
+            matchedAuthor?.let {
+                manga.author = it.name
+                manga.artist = it.name
+            }
+        }
     }
 
     override fun pageListRequest(chapter: SChapter) =
