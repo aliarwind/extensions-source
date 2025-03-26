@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.extension.zh.wnacg
 
+import android.content.Context
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -31,6 +32,14 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
     }
 
     private val updateUrlInterceptor = UpdateUrlInterceptor(preferences)
+    private lateinit var appContext: Context
+    private val authorRepository by lazy {
+        AuthorRepository(appContext).apply {
+            loadAuthors()
+        }
+    }
+
+
 
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(updateUrlInterceptor)
@@ -129,6 +138,9 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
             manga.artist = titleAuthor
             manga.author = titleAuthor
         }
+        if (manga.author == null){
+            authorRepository.findAuthorByName("")
+        }
         return manga
     }
 
@@ -183,6 +195,7 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
     // <<< Filters <<<
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        appContext = screen.context
         getPreferencesInternal(screen.context, preferences, updateUrlInterceptor.isUpdated).forEach(screen::addPreference)
     }
 }
