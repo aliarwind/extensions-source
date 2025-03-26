@@ -1,7 +1,8 @@
 [versions]
 kotlin = "2.3.0"
 coroutines = "1.10.2"
-
+gsonVersion = "2.11.0"
+converterGsonVersion = "2.11.0"
 # 1.8 and beyond switched to `all-compatibility` mode
 # https://github.com/Kotlin/kotlinx.serialization/blob/master/CHANGELOG.md#generate-java-8s-default-method-implementations-in-interfaces
 # this causes issues for extensions as some required generated classes are not in the final apk due to the library being compile only
@@ -9,12 +10,16 @@ coroutines = "1.10.2"
 serialization = "1.7.3"
 
 [libraries]
+converter-gson = { module = "com.squareup.retrofit2:converter-gson", version.ref = "converterGsonVersion" }
 gradle-agp = { module = "com.android.tools.build:gradle", version = "9.0.0" }
 gradle-kotlin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 gradle-serialization = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
+gradle-kotlinter = { module = "org.jmailen.gradle:kotlinter-gradle", version = "3.13.0" }
 
 spotless-gradle = { group = "com.diffplug.spotless", name = "spotless-plugin-gradle", version = "8.2.1" }
 
+gson = { module = "com.google.code.gson:gson", version.ref = "gsonVersion" }
+retrofit = { module = "com.squareup.retrofit2:retrofit" }
 tachiyomi-lib = { module = "com.github.keiyoushi:extensions-lib", version = "v1.4.2.1" }
 
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib-jdk8", version.ref = "kotlin" }
