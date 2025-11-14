@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.extension.zh.wnacg
 
-import android.content.Context
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -10,6 +11,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.ParsedHttpSource
+import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.getPreferences
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -17,7 +19,9 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import rx.Observable
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.regex.Pattern
 
 class wnacg : ParsedHttpSource(), ConfigurableSource {
     override val name = "紳士漫畫"
@@ -32,12 +36,6 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
     }
 
     private val updateUrlInterceptor = UpdateUrlInterceptor(preferences)
-    private lateinit var appContext: Context
-    private val authorRepository by lazy {
-        AuthorRepository(appContext).apply {
-            loadAuthors()
-        }
-    }
 
     override val client = network.cloudflareClient.newBuilder()
         .addInterceptor(updateUrlInterceptor)
@@ -75,7 +73,10 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
     }
 
     override fun headersBuilder() = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0")
+        .add(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        )
         .set("referer", baseUrl)
         .set("sec-fetch-mode", "no-cors")
         .set("sec-fetch-site", "cross-site")
@@ -97,21 +98,55 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
         return manga
     }
 
-    override fun fetchChapterList(manga: SManga): Observable<List<SChapter>> {
-        val chapter = SChapter.create().apply {
-            url = manga.url
-            name = "Ch. 1"
+//    override fun fetchChapterList(manga: SManga): Observable<List<SChapter>> {
+//
+//        val chapter = SChapter.create().apply {
+//            url = manga.url
+//            name = "Ch. 1"
+//        }
+//        return Observable.just(listOf(chapter))
+//    }
+
+    private val datePattern = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})")
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun chapterListParse(response: Response): List<SChapter> {
+        val document = response.asJsoup()
+        val requestUrl = response.request.url.toString()
+        val chapterUrl = requestUrl.removePrefix(baseUrl)
+        val infoColText = document.selectFirst("div.gallary_wrap.tb")
+            ?.selectFirst("li.li.tb.gallary_item")
+            ?.selectFirst("div.info_col")
+            ?.text()?.trim()
+        var _date_upload = 0L
+        if (infoColText != null) {
+            val matcher = datePattern.matcher(infoColText)
+            if (matcher.find()) {
+                val extractedDate = matcher.group(1)
+                val date = LocalDate.parse(extractedDate)
+                // 2. 转换为当天的起始时间（00:00:00），并转为时间戳（毫秒）
+                _date_upload = date.atStartOfDay(ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+            }
         }
-        return Observable.just(listOf(chapter))
+
+        val singleChapter = SChapter.create().apply {
+            name = "Ch. 1"
+            url = chapterUrl
+            date_upload = _date_upload
+        }
+        return listOf(singleChapter)
     }
 
     companion object {
-        val TITLE_AUTHOR_REGEX: Regex = Regex("\\[(.*?)]")
+        val TITLE_AUTHOR_REGEX0: Regex = Regex("""\[(.*?)]|\((.*?)\)|（(.*?)）""")
         val ONLY_ALPHA_REGEX: Regex = Regex("^[a-zA-Z]$")
         val ONLY_NUMBER_REGEX: Regex = Regex("^\\d+$")
         val TAGS_FILTER_REGEX_LIST = listOf(ONLY_NUMBER_REGEX, ONLY_ALPHA_REGEX)
         val TAGS_EXCLUDE_LIST = listOf("yyy", "xxx")
     }
+
     override fun mangaDetailsParse(document: Document): SManga {
         val manga = SManga.create()
         val tags = document.select("div.uwconn a.tagshow")
@@ -131,38 +166,34 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
             document.selectFirst("div.asTBcell p")?.html()?.replace("<br>", "\n")
         manga.genre = filterTags?.joinToString(", ") { it.trim() }
         manga.status = SManga.COMPLETED
-        toCompleteAuthor(manga, tags)
+//        val titleAuthor = TITLE_AUTHOR_REGEX0.find(manga.title)?.groupValues?.get(1)
+//        if (tags?.any { tag -> titleAuthor?.contains(tag) == true } == true) {
+//            manga.artist = titleAuthor
+//            manga.author = titleAuthor
+//        }
+        extractAuthor(tags, manga)
         return manga
     }
 
-    private fun toCompleteAuthor(
-        manga: SManga,
-        tags: List<String>?,
-    ) {
-        val titleParams = TITLE_AUTHOR_REGEX.find(manga.title)?.groupValues ?: emptyList()
-        val titleAuthor = titleParams.get(1)
-        tags?.any { tag -> titleAuthor.contains(tag) }?.let {
-            manga.artist = titleAuthor
-            manga.author = titleAuthor
-        }
-        if (manga.author == null) {
-            val matchedAuthor = titleParams.asSequence()
-                .mapNotNull { name -> authorRepository.findAuthorByName(name) }
-                .firstOrNull()
-            matchedAuthor?.let {
-                manga.author = it.name
-                manga.artist = it.name
+    fun extractAuthor(tags: List<String>?, manga: SManga) {
+        // 1. 按优先级尝试不同正则匹配
+        val possibleAuthors = TITLE_AUTHOR_REGEX0.findAll(manga.title)
+            .flatMap { matchResult ->
+                // 获取所有非空的捕获组（1-3组分别对应三种括号）
+                matchResult.groupValues.drop(1).filter { it.isNotEmpty() }
             }
+            .toList()
+
+        // 2. 优先从 tags 匹配作者
+        manga.artist = possibleAuthors.firstOrNull { author ->
+            tags?.any { tag -> author.contains(tag, ignoreCase = true) } == true
         }
-        if (manga.author == null) {
-            val matchedAuthor = tags?.asSequence()
-                ?.mapNotNull { name -> authorRepository.findAuthorByName(name) }
-                ?.firstOrNull()
-            matchedAuthor?.let {
-                manga.author = it.name
-                manga.artist = it.name
-            }
-        }
+            // 3. 次优选择：直接取第一个匹配到的作者
+            ?: possibleAuthors.firstOrNull()
+            // 4. 默认值
+            ?: "某绅士"
+
+        manga.author = manga.artist // 同步 author
     }
 
     override fun pageListRequest(chapter: SChapter) =
@@ -216,7 +247,8 @@ class wnacg : ParsedHttpSource(), ConfigurableSource {
     // <<< Filters <<<
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        appContext = screen.context
-        getPreferencesInternal(screen.context, preferences, updateUrlInterceptor.isUpdated).forEach(screen::addPreference)
+        getPreferencesInternal(screen.context, preferences, updateUrlInterceptor.isUpdated).forEach(
+            screen::addPreference,
+        )
     }
 }
