@@ -1,19 +1,36 @@
+
+plugins {
+//    id("com.android.application") // 或 id("com.android.library")
+//    id("kotlin-android")
+//    id("com.diffplug.spotless")
+}
 ext {
     extName = 'WNACG'
-    extClass = '.wnacg'
-    extVersionCode = 20
+    extClass = '.WNACG'
+    extVersionCode = 24
     isNsfw = true
 }
-plugins{
-    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22"
-}
+
+
+//spotless {
+//    kotlin {
+//        target("**/*.kt", "**/*.kts")
+//        targetExclude("**/build/**/*.kt")
+//        ktlint()
+//                .userData(mapOf(
+//                        "disabled_rules" to "no-empty-file,class-naming"
+//                ))
+//    }
+//}
 apply from: "$rootDir/common.gradle"
 
 dependencies {
     implementation libs.gson
     implementation(libs.retrofit)
     implementation libs.converter.gson
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
-    implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.10.0")
+    implementation(project(":lib:randomua"))
+//    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+//    implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
+//    implementation("com.squareup.okhttp3:logging-interceptor:4.10.0")
+//    implementation("com.diffplug.spotless:6.25.0")
 }
