@@ -15,13 +15,16 @@ import keiyoushi.source.KeiSource
 import keiyoushi.utils.asJsoup
 import keiyoushi.utils.firstInstanceOrNull
 import keiyoushi.utils.getPreferences
+import keiyoushi.utils.tryParseDate
 import kotlinx.serialization.json.JsonElement
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.time.format.DateTimeFormatter
 
 @Source
 abstract class WNACG :
@@ -128,7 +131,7 @@ abstract class WNACG :
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
         if (url.host != baseUrl.toHttpUrl().host || !mangaUrlRegex.matches(url.encodedPath)) return null
 
-        return mangaDetailsParse(client.get(url)).apply {
+        return mangaDetailsParse(client.get(url).asJsoup()).apply {
             this.url = url.encodedPath
             initialized = true
         }
@@ -140,8 +143,14 @@ abstract class WNACG :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
+        val document = if (fetchDetails || fetchChapters) {
+            client.get(getMangaUrl(manga)).asJsoup()
+        } else {
+            null
+        }
+
         val updatedManga = if (fetchDetails) {
-            mangaDetailsParse(client.get(getMangaUrl(manga))).apply { url = manga.url }
+            mangaDetailsParse(document!!).apply { url = manga.url }
         } else {
             manga
         }
@@ -150,6 +159,7 @@ abstract class WNACG :
                 SChapter.create().apply {
                     url = manga.url
                     name = "Ch. 1"
+                    date_upload = extractChapterDate(document!!)
                 },
             )
         } else {
@@ -225,17 +235,74 @@ abstract class WNACG :
 
     private fun latestUpdatesUrl(page: Int) = "$baseUrl/albums-index-page-$page.html"
 
-    private fun mangaDetailsParse(response: Response): SManga {
-        val document = response.asJsoup()
-        return SManga.create().apply {
-            title = document.selectFirst("h2")!!.text()
-            artist = document.selectFirst("div.uwuinfo p")?.text()
-            author = document.selectFirst("div.uwuinfo p")?.text()
-            genre = document.select("a.tagshow").eachText().joinToString(", ").ifEmpty { null }
-            thumbnail_url = "http:" + document.selectFirst("div.uwthumb img")!!.attr("src")
-            description = document.selectFirst("div.asTBcell p")?.html()?.replace("<br>", "\n")
-            status = SManga.COMPLETED
+    private fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
+        val tags = document.select("a.tagshow")
+            .takeIf { it.isNotEmpty() }
+            ?.map { it.text().trim() }
+        val filterTags = tags?.filter { tag ->
+            val isMatch = TAGS_FILTER_REGEX_LIST.any { regex -> tag.matches(regex) }
+            !isMatch && !TAGS_EXCLUDE_LIST.contains(tag)
         }
+        title = document.selectFirst("h2")!!.text()
+        artist = extractAuthor(tags, title)
+        author = artist
+        genre = filterTags?.joinToString(", ") { it.trim() }
+        thumbnail_url = "http:" + document.selectFirst("div.uwthumb img")!!.attr("src")
+        description = document.selectFirst("div.asTBcell p")?.html()?.replace("<br>", "\n")
+        status = SManga.COMPLETED
+    }
+
+    private fun extractAuthor(tags: List<String>?, title: String): String {
+        val excludeWords = preferences.authorExcludeList
+        val possibleAuthors = mutableListOf<String>()
+        for (regex in PRIORITY_REGEXES) {
+            regex.findAll(title).forEach { match ->
+                val author = match.groupValues[1].trim()
+                if (author.isNotEmpty() &&
+                    !author.contains("汉化") &&
+                    !author.contains("漢化") &&
+                    !author.contains("机翻") &&
+                    !author.contains("機翻") &&
+                    !author.contains("无修正") &&
+                    !author.contains("無修正") &&
+                    !author.contains("中译") &&
+                    !author.contains("中譯") &&
+                    !author.contains("中文") &&
+                    !author.contains("翻译") &&
+                    !author.contains("翻譯") &&
+                    !author.contains("自翻") &&
+                    !author.contains("日語") &&
+                    !author.contains("日语") &&
+                    !author.contains("上色") &&
+                    !author.contains("全彩") &&
+                    !author.contains("風的工房") &&
+                    !author.contains("風之工房") &&
+                    !author.contains("风的工房") &&
+                    !author.contains("风之工房") &&
+                    !author.contains("掃圖") &&
+                    !author.contains("扫图") &&
+                    excludeWords.none { keyword -> author.contains(keyword) }
+                ) {
+                    possibleAuthors.add(author)
+                }
+            }
+        }
+        val artist = possibleAuthors.firstOrNull { author ->
+            tags?.any { tag -> author.contains(tag, ignoreCase = true) } == true
+        }
+            ?: possibleAuthors.firstOrNull()
+            ?: "某绅士"
+        return artist
+    }
+
+    private fun extractChapterDate(document: Document): Long {
+        val infoColText = document.selectFirst("div.gallary_wrap.tb")
+            ?.selectFirst("li.li.tb.gallary_item")
+            ?.selectFirst("div.info_col")
+            ?.text()?.trim()
+            ?: return 0L
+        val extractedDate = datePattern.find(infoColText)?.groupValues?.get(1) ?: return 0L
+        return dateFormatter.tryParseDate(extractedDate)
     }
 
     private fun mangaFromElement(element: Element): SManga = SManga.create().apply {
@@ -251,6 +318,15 @@ abstract class WNACG :
             RegexOption.IGNORE_CASE,
         )
         private val mangaUrlRegex = Regex("""/photos-index-aid-\d+\.html""")
+        private val datePattern = Regex("""(\d{4}-\d{2}-\d{2})""")
+        private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        private val PRIORITY_REGEXES = listOf(
+            Regex("""\[(.*?)]"""),
+        )
+        private val ONLY_ALPHA_REGEX = Regex("^[a-zA-Z]$")
+        private val ONLY_NUMBER_REGEX = Regex("""^\d+$""")
+        private val TAGS_FILTER_REGEX_LIST = listOf(ONLY_NUMBER_REGEX, ONLY_ALPHA_REGEX)
+        private val TAGS_EXCLUDE_LIST = listOf("yyy", "xxx")
     }
 }
 

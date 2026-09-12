@@ -33,6 +33,24 @@ fun getPreferencesInternal(
     },
 
     EditTextPreference(context).apply {
+        key = INPUT_URL_PREF
+        title = "輸入網址"
+        setOnPreferenceChangeListener { _, newValue ->
+            preferences.edit().putString(key, newValue as String).commit()
+        }
+    },
+
+    EditTextPreference(context).apply {
+        key = AUTHOR_EXCLUDE_PREF
+        title = "作者匹配排除字符"
+        summary = "用逗号分隔，匹配到的作者名若包含任一关键字则排除\n例如: LMK,ABC 工作室"
+        dialogTitle = "作者匹配排除字符（逗号分隔）"
+        setOnPreferenceChangeListener { _, newValue ->
+            preferences.edit().putString(key, newValue as String).commit()
+        }
+    },
+
+    EditTextPreference(context).apply {
         key = TITLE_BLACKLIST_PREF
         title = "标题屏蔽关键词"
         summary = titleBlacklistSummary(preferences.getString(TITLE_BLACKLIST_PREF, ""))
@@ -75,6 +93,10 @@ fun getPreferencesInternal(
 
 val SharedPreferences.baseUrl: String
     get() {
+        val inputUrl = getString(INPUT_URL_PREF, "")?.trim()
+        if (!inputUrl.isNullOrBlank()) {
+            return inputUrl
+        }
         val list = urlList
         return list.getOrNull(urlIndex) ?: list[0]
     }
@@ -84,6 +106,12 @@ val SharedPreferences.urlList get() = getString(URL_LIST_PREF, DEFAULT_LIST)
     .orEmpty()
     .toValidUrlList()
     .ifEmpty { DEFAULT_LIST.toValidUrlList() }
+
+val SharedPreferences.authorExcludeList: List<String>
+    get() = getString(AUTHOR_EXCLUDE_PREF, "")!!
+        .split(",", "，")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
 
 val SharedPreferences.titleBlacklist: List<String>
     get() = getString(TITLE_BLACKLIST_PREF, "")
@@ -187,6 +215,8 @@ private fun String.toValidUrlList(): List<String> = split(',')
 private const val DEFAULT_LIST_PREF = "defaultBaseUrl"
 private const val URL_LIST_PREF = "baseUrlList"
 private const val URL_INDEX_PREF = "baseUrlIndex"
+private const val INPUT_URL_PREF = "inputUrl"
+private const val AUTHOR_EXCLUDE_PREF = "authorExcludeList"
 private const val TITLE_BLACKLIST_PREF = "titleBlacklist"
 private const val BLACKLIST_MAX_SCAN_PAGES_PREF = "blacklistMaxScanPages"
 private const val FILTER_SEARCH_RESULTS_PREF = "filterSearchResults"
