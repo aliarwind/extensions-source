@@ -182,12 +182,17 @@ abstract class WNACG :
     }
 
     private fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
-        title = document.selectFirst("h2")?.text() ?: throw IOException(LOGIN_HINT)
-        artist = document.selectFirst("div.uwuinfo p")?.text()
+        val title = document.selectFirst("h2")?.text() ?: throw IOException(LOGIN_HINT)
+        this.title = title
+        val tags = document.select("div.addtags a.tagshow").eachText()
+        artist = extractAuthor(tags, title)
         author = artist
         val category = document.selectFirst("div.uwconn label:contains(分類：)")?.text()
             ?.removePrefix("分類：")?.split('／').orEmpty()
-        genre = (category + document.select("div.addtags a.tagshow").eachText()).distinct().joinToString().ifEmpty { null }
+        genre = (category + tags.filter { tag ->
+            val isMatch = TAGS_FILTER_REGEX_LIST.any { regex -> tag.matches(regex) }
+            !isMatch && !TAGS_EXCLUDE_LIST.contains(tag)
+        }).distinct().joinToString().ifEmpty { null }
         thumbnail_url = document.selectFirst("div.uwthumb img")?.attrOrNull("src")?.toImageUrl()
         description = document.selectFirst("div.uwconn p:contains(簡介：)")?.wholeText()
             ?.removePrefix("簡介：")?.trim()?.ifEmpty { null }
@@ -199,6 +204,47 @@ abstract class WNACG :
             val statusText = document.selectFirst("div.uwconn label:contains(狀態)")?.text().orEmpty()
             status = if ("連載中" in statusText) SManga.ONGOING else SManga.COMPLETED
         }
+    }
+
+    // Extract the author from [bracketed] patterns in the title, matched against tags when possible
+    private fun extractAuthor(tags: List<String>, title: String): String {
+        val excludeWords = preferences.authorExcludeList
+        val possibleAuthors = mutableListOf<String>()
+        for (regex in PRIORITY_REGEXES) {
+            regex.findAll(title).forEach { match ->
+                val author = match.groupValues[1].trim()
+                if (author.isNotEmpty() &&
+                    !author.contains("汉化") &&
+                    !author.contains("漢化") &&
+                    !author.contains("机翻") &&
+                    !author.contains("機翻") &&
+                    !author.contains("无修正") &&
+                    !author.contains("無修正") &&
+                    !author.contains("中译") &&
+                    !author.contains("中譯") &&
+                    !author.contains("中文") &&
+                    !author.contains("翻译") &&
+                    !author.contains("翻譯") &&
+                    !author.contains("自翻") &&
+                    !author.contains("日語") &&
+                    !author.contains("日语") &&
+                    !author.contains("上色") &&
+                    !author.contains("全彩") &&
+                    !author.contains("風的工房") &&
+                    !author.contains("風之工房") &&
+                    !author.contains("风的工房") &&
+                    !author.contains("风之工房") &&
+                    !author.contains("掃圖") &&
+                    !author.contains("扫图") &&
+                    excludeWords.none { keyword -> author.contains(keyword) }
+                ) {
+                    possibleAuthors.add(author)
+                }
+            }
+        }
+        return possibleAuthors.firstOrNull { author ->
+            tags.any { tag -> author.contains(tag, ignoreCase = true) }
+        } ?: possibleAuthors.firstOrNull() ?: "某绅士"
     }
 
     private suspend fun chaptersParse(document: Document, manga: SManga): List<SChapter> {
@@ -358,6 +404,15 @@ abstract class WNACG :
         private val chapterDateRegex = Regex("""\d{4}-\d{2}-\d{2}""")
         private val chapterDateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         private val chapterZone = ZoneId.of("Asia/Taipei")
+
+        // Author extraction from title bracket patterns
+        private val PRIORITY_REGEXES = listOf(
+            Regex("""\[(.*?)]"""),
+        )
+        private val ONLY_ALPHA_REGEX = Regex("^[a-zA-Z]$")
+        private val ONLY_NUMBER_REGEX = Regex("""^\d+$""")
+        private val TAGS_FILTER_REGEX_LIST = listOf(ONLY_NUMBER_REGEX, ONLY_ALPHA_REGEX)
+        private val TAGS_EXCLUDE_LIST = listOf("yyy", "xxx")
     }
 }
 

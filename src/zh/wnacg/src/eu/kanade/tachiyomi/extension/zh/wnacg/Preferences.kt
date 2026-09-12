@@ -14,6 +14,16 @@ fun getPreferencesInternal(
     preferences: SharedPreferences,
 ) = arrayOf(
     EditTextPreference(context).apply {
+        key = AUTHOR_EXCLUDE_PREF
+        title = "作者匹配排除字符"
+        summary = "用逗号分隔，匹配到的作者名若包含任一关键字则排除\n例如: LMK,ABC 工作室"
+        dialogTitle = "作者匹配排除字符（逗号分隔）"
+        setOnPreferenceChangeListener { _, newValue ->
+            preferences.edit().putString(key, newValue as String).commit()
+        }
+    },
+
+    EditTextPreference(context).apply {
         key = TITLE_BLACKLIST_PREF
         title = "标题屏蔽关键词"
         summary = titleBlacklistSummary(preferences.getString(TITLE_BLACKLIST_PREF, ""))
@@ -58,6 +68,12 @@ var SharedPreferences.extraCategories: List<Pair<String, String>>
     get() = getString(EXTRA_CATEGORIES_PREF, null)?.parseAs<List<Pair<String, String>>>().orEmpty()
     set(value) = edit().putString(EXTRA_CATEGORIES_PREF, value.toJsonString()).apply()
 
+val SharedPreferences.authorExcludeList: List<String>
+    get() = getString(AUTHOR_EXCLUDE_PREF, "")!!
+        .split(",", "，")
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+
 val SharedPreferences.titleBlacklist: List<String>
     get() = getString(TITLE_BLACKLIST_PREF, "")
         .orEmpty()
@@ -93,6 +109,7 @@ private const val DEFAULT_LIST_PREF = "defaultBaseUrl"
 private const val URL_LIST_PREF = "baseUrlList"
 private const val URL_INDEX_PREF = "baseUrlIndex"
 private const val EXTRA_CATEGORIES_PREF = "extraCategories"
+private const val AUTHOR_EXCLUDE_PREF = "authorExcludeList"
 private const val TITLE_BLACKLIST_PREF = "titleBlacklist"
 private const val BLACKLIST_MAX_SCAN_PAGES_PREF = "blacklistMaxScanPages"
 private const val FILTER_SEARCH_RESULTS_PREF = "filterSearchResults"
