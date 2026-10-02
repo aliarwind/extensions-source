@@ -24,6 +24,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Source
@@ -143,29 +144,11 @@ abstract class WNACG :
         fetchDetails: Boolean,
         fetchChapters: Boolean,
     ): SMangaUpdate {
-        val document = if (fetchDetails || fetchChapters) {
-            client.get(getMangaUrl(manga)).asJsoup()
-        } else {
-            null
-        }
-
-        val updatedManga = if (fetchDetails) {
-            mangaDetailsParse(document!!).apply { url = manga.url }
-        } else {
-            manga
-        }
-        val updatedChapters = if (fetchChapters) {
-            listOf(
-                SChapter.create().apply {
-                    url = manga.url
-                    name = "Ch. 1"
-                    date_upload = extractChapterDate(document!!)
-                },
-            )
-        } else {
-            chapters
-        }
-        return SMangaUpdate(updatedManga, updatedChapters)
+        val document = client.get(getMangaUrl(manga)).asJsoup()
+        return SMangaUpdate(
+            mangaDetailsParse(document).apply { url = manga.url },
+            chaptersParse(document, manga),
+        )
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> = client.get(
@@ -236,7 +219,7 @@ abstract class WNACG :
     private fun latestUpdatesUrl(page: Int) = "$baseUrl/albums-index-page-$page.html"
 
     private fun mangaDetailsParse(document: Document): SManga = SManga.create().apply {
-        val tags = document.select("a.tagshow")
+        val tags = document.select("div.addtags a.tagshow")
             .takeIf { it.isNotEmpty() }
             ?.map { it.text().trim() }
         val filterTags = tags?.filter { tag ->
@@ -249,7 +232,8 @@ abstract class WNACG :
         genre = filterTags?.joinToString(", ") { it.trim() }
         thumbnail_url = "http:" + document.selectFirst("div.uwthumb img")!!.attr("src")
         description = document.selectFirst("div.asTBcell p")?.html()?.replace("<br>", "\n")
-        status = SManga.COMPLETED
+        val statusText = document.selectFirst("div.uwconn label:contains(狀態)")?.text().orEmpty()
+        status = if ("連載中" in statusText) SManga.ONGOING else SManga.COMPLETED
     }
 
     private fun extractAuthor(tags: List<String>?, title: String): String {
@@ -305,6 +289,29 @@ abstract class WNACG :
         return dateFormatter.tryParseDate(extractedDate)
     }
 
+    private fun chaptersParse(document: Document, manga: SManga): List<SChapter> {
+        val chapterElements = document.select("div.sr_compact a.tagshow[data-chid]")
+        if (chapterElements.isEmpty()) {
+            return listOf(
+                SChapter.create().apply {
+                    url = manga.url
+                    name = "Ch. 1"
+                    date_upload = extractChapterDate(document)
+                },
+            )
+        }
+        return chapterElements.map { element ->
+            SChapter.create().apply {
+                url = "/photos-index-aid-${element.attr("data-chid")}.html"
+                name = element.text()
+                date_upload = dateFormatter.tryParseDate(
+                    datePattern.find(element.attr("title"))?.value,
+                    chapterZone,
+                )
+            }
+        }
+    }
+
     private fun mangaFromElement(element: Element): SManga = SManga.create().apply {
         val link = element.selectFirst(".title > a")!!
         url = link.attr("href")
@@ -320,6 +327,7 @@ abstract class WNACG :
         private val mangaUrlRegex = Regex("""/photos-index-aid-\d+\.html""")
         private val datePattern = Regex("""(\d{4}-\d{2}-\d{2})""")
         private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+        private val chapterZone = ZoneId.of("Asia/Taipei")
         private val PRIORITY_REGEXES = listOf(
             Regex("""\[(.*?)]"""),
         )
