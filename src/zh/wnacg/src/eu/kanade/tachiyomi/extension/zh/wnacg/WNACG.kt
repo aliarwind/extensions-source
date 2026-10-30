@@ -194,8 +194,15 @@ abstract class WNACG :
             !isMatch && !TAGS_EXCLUDE_LIST.contains(tag)
         }).distinct().joinToString().ifEmpty { null }
         thumbnail_url = document.selectFirst("div.uwthumb img")?.attrOrNull("src")?.toImageUrl()
-        description = document.selectFirst("div.uwconn p:contains(簡介：)")?.wholeText()
-            ?.removePrefix("簡介：")?.trim()?.ifEmpty { null }
+        description = document.select("div.asTBcell p")
+            .map { it.text() }
+            .firstOrNull { it.startsWith("簡介") || it.startsWith("简介") }
+            ?.removePrefix("簡介：")
+            ?.removePrefix("簡介:")
+            ?.removePrefix("简介：")
+            ?.removePrefix("简介:")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
         // Collections (合集) carry a chapter count; single galleries don't change
         if (document.selectFirst("div.uwconn label:contains(章節：)") == null) {
             status = SManga.COMPLETED
@@ -395,7 +402,6 @@ abstract class WNACG :
             """//[^\s"'\\]+\.(?:jpeg|jpg|png|webp|gif)(?:\?[^\s"'\\]*)?""",
             RegexOption.IGNORE_CASE,
         )
-
         // Gallery page, reader and chapter links; a chapter's sid is its collection
         private val mangaUrlRegex = Regex("""/photos-(?:index|slide|list|gallery)(?:-page-\d+)?-aid-(\d+)(?:-sid-(\d+))?(?:-page-\d+)?\.html""")
         private val mirrorHostRegex = Regex("""^(?:www\.)?wn(?:acg\w*|\d+)\.""")
