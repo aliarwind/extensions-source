@@ -62,6 +62,18 @@ fun getPreferencesInternal(
         summary = "开启后，关键词、分类和标签搜索结果也会应用标题屏蔽关键词。"
         setDefaultValue(true)
     },
+
+    EditTextPreference(context).apply {
+        key = LOGIN_COOKIE_PREF
+        title = "登录 Cookie"
+        summary = loginCookieSummary(preferences.getString(LOGIN_COOKIE_PREF, ""))
+        setOnPreferenceChangeListener { _, newValue ->
+            summary = loginCookieSummary(newValue as String)
+            true
+        }
+        dialogTitle = "登录 Cookie"
+        setDefaultValue("")
+    },
 )
 
 var SharedPreferences.extraCategories: List<Pair<String, String>>
@@ -90,6 +102,24 @@ val SharedPreferences.blacklistMaxScanPages: Int
         ?.takeIf { it >= 1 }
         ?: DEFAULT_MAX_SCAN_PAGES
 
+val SharedPreferences.loginCookies: List<Pair<String, String>>
+    get() = getString(LOGIN_COOKIE_PREF, "").orEmpty().parseCookiePairs()
+
+private fun loginCookieSummary(value: String?) = if (value.orEmpty().parseCookiePairs().isEmpty()) {
+    "未设置。在浏览器登录 wnacg 后，从开发者工具网络面板复制任意请求的 Cookie 请求头" +
+        "（形如 名称=值; 名称=值）粘贴到这里。请确保插件当前网址与登录域名一致。"
+} else {
+    "已设置 Cookie，登录态会注入到请求中。"
+}
+
+private fun String.parseCookiePairs(): List<Pair<String, String>> = split(';').mapNotNull { part ->
+    val separator = part.indexOf('=')
+    if (separator <= 0) return@mapNotNull null
+    val name = part.substring(0, separator).trim()
+    val value = part.substring(separator + 1).trim()
+    if (name.isEmpty() || value.isEmpty()) null else name to value
+}
+
 private fun titleBlacklistSummary(value: String?) = value?.takeIf(String::isNotBlank)?.let { "$it\n$TITLE_BLACKLIST_SUMMARY" }
     ?: TITLE_BLACKLIST_SUMMARY
 
@@ -113,6 +143,7 @@ private const val AUTHOR_EXCLUDE_PREF = "authorExcludeList"
 private const val TITLE_BLACKLIST_PREF = "titleBlacklist"
 private const val BLACKLIST_MAX_SCAN_PAGES_PREF = "blacklistMaxScanPages"
 private const val FILTER_SEARCH_RESULTS_PREF = "filterSearchResults"
+private const val LOGIN_COOKIE_PREF = "loginCookie"
 private const val DEFAULT_MAX_SCAN_PAGES = 5
 private const val TITLE_BLACKLIST_SUMMARY = "使用英文逗号或换行分隔多个关键词；忽略大小写，始终作用于热门和最新列表。"
 private const val BLACKLIST_MAX_SCAN_PAGES_SUMMARY =

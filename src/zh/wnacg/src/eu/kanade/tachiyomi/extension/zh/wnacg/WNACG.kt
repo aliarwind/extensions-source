@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import keiyoushi.annotation.Source
 import keiyoushi.network.Fetch
+import keiyoushi.network.addCookie
 import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
@@ -49,6 +50,7 @@ abstract class WNACG :
         addInterceptor(::loginHintInterceptor)
         // Cloudflare answers 429 past 60 page requests a minute
         rateLimit(50, 1.minutes) { mirrorHostRegex.containsMatchIn(it.host) }
+        addCookie { preferences.loginCookies }
     }
 
     // Mobile user agents get a mobile layout
@@ -189,10 +191,12 @@ abstract class WNACG :
         author = artist
         val category = document.selectFirst("div.uwconn label:contains(分類：)")?.text()
             ?.removePrefix("分類：")?.split('／').orEmpty()
-        genre = (category + tags.filter { tag ->
-            val isMatch = TAGS_FILTER_REGEX_LIST.any { regex -> tag.matches(regex) }
-            !isMatch && !TAGS_EXCLUDE_LIST.contains(tag)
-        }).distinct().joinToString().ifEmpty { null }
+        genre = (
+            category + tags.filter { tag ->
+                val isMatch = TAGS_FILTER_REGEX_LIST.any { regex -> tag.matches(regex) }
+                !isMatch && !TAGS_EXCLUDE_LIST.contains(tag)
+            }
+            ).distinct().joinToString().ifEmpty { null }
         thumbnail_url = document.selectFirst("div.uwthumb img")?.attrOrNull("src")?.toImageUrl()
         description = document.select("div.asTBcell p")
             .map { it.text() }
@@ -402,6 +406,7 @@ abstract class WNACG :
             """//[^\s"'\\]+\.(?:jpeg|jpg|png|webp|gif)(?:\?[^\s"'\\]*)?""",
             RegexOption.IGNORE_CASE,
         )
+
         // Gallery page, reader and chapter links; a chapter's sid is its collection
         private val mangaUrlRegex = Regex("""/photos-(?:index|slide|list|gallery)(?:-page-\d+)?-aid-(\d+)(?:-sid-(\d+))?(?:-page-\d+)?\.html""")
         private val mirrorHostRegex = Regex("""^(?:www\.)?wn(?:acg\w*|\d+)\.""")
