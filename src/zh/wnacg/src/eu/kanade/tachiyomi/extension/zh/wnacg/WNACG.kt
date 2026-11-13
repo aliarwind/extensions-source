@@ -20,6 +20,7 @@ import keiyoushi.utils.asJsoup
 import keiyoushi.utils.attrOrNull
 import keiyoushi.utils.firstInstanceOrNull
 import keiyoushi.utils.getPreferences
+import keiyoushi.utils.toMarkdown
 import keiyoushi.utils.tryParseDate
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -199,8 +200,8 @@ abstract class WNACG :
             ).distinct().joinToString().ifEmpty { null }
         thumbnail_url = document.selectFirst("div.uwthumb img")?.attrOrNull("src")?.toImageUrl()
         description = document.select("div.asTBcell p")
-            .map { it.text() }
-            .firstOrNull { it.startsWith("簡介") || it.startsWith("简介") }
+            .firstOrNull { it.text().startsWith("簡介") || it.text().startsWith("简介") }
+            ?.toMarkdown()
             ?.removePrefix("簡介：")
             ?.removePrefix("簡介:")
             ?.removePrefix("简介：")
