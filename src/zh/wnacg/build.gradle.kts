@@ -17,6 +17,7 @@ keiyoushi {
             mirrors(
                 "https://www.wnacg.buzz",
                 "https://www.wnacg.site",
+                "https://www.wn01.cfd",
             )
         }
     }
