@@ -18,6 +18,7 @@ keiyoushi {
                 "https://www.wnacg.buzz",
                 "https://www.wnacg.site",
                 "https://www.wn01.cfd",
+                "https://www.wnacg.com",
             )
         }
     }
