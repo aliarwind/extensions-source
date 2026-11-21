@@ -199,8 +199,9 @@ abstract class WNACG :
         val title = document.selectFirst("h2")?.text() ?: throw IOException(LOGIN_HINT)
         this.title = title
         val tags = document.select("div.addtags a.tagshow").eachText()
-        artist = extractAuthor(tags, title)
-        author = artist
+        val (authorName, artistName) = extractNames(tags, title)
+        author = authorName
+        artist = artistName
         val category = document.selectFirst("div.uwconn label:contains(分類：)")?.text()
             ?.removePrefix("分類：")?.split('／').orEmpty()
         genre = (
@@ -229,46 +230,82 @@ abstract class WNACG :
         }
     }
 
-    // Extract the author from [bracketed] patterns in the title, matched against tags when possible
-    private fun extractAuthor(tags: List<String>, title: String): String {
-        val excludeWords = preferences.authorExcludeList
-        val possibleAuthors = mutableListOf<String>()
-        for (regex in PRIORITY_REGEXES) {
-            regex.findAll(title).forEach { match ->
-                val author = match.groupValues[1].trim()
-                if (author.isNotEmpty() &&
-                    !author.contains("汉化") &&
-                    !author.contains("漢化") &&
-                    !author.contains("机翻") &&
-                    !author.contains("機翻") &&
-                    !author.contains("无修正") &&
-                    !author.contains("無修正") &&
-                    !author.contains("中译") &&
-                    !author.contains("中譯") &&
-                    !author.contains("中文") &&
-                    !author.contains("翻译") &&
-                    !author.contains("翻譯") &&
-                    !author.contains("自翻") &&
-                    !author.contains("日語") &&
-                    !author.contains("日语") &&
-                    !author.contains("上色") &&
-                    !author.contains("全彩") &&
-                    !author.contains("風的工房") &&
-                    !author.contains("風之工房") &&
-                    !author.contains("风的工房") &&
-                    !author.contains("风之工房") &&
-                    !author.contains("掃圖") &&
-                    !author.contains("扫图") &&
-                    excludeWords.none { keyword -> author.contains(keyword) }
-                ) {
-                    possibleAuthors.add(author)
-                }
-            }
-        }
-        return possibleAuthors.firstOrNull { author ->
-            tags.any { tag -> author.contains(tag, ignoreCase = true) }
-        } ?: possibleAuthors.firstOrNull() ?: "某绅士"
+    /**
+     * The page has no author field, so the names have to come from the title. Two things make that
+     * reliable: the site tags the circle and the person (genres follow, and both names appear as tags),
+     * and the title convention is `[circle (person)]` for doujin, `[person]` otherwise.
+     *
+     * A parenthesis outside a bracket is the parody or the original work ("(オリジナル)", "(Fate)"), not a
+     * person, so only bracket groups are candidates. When no bracket carries a name the prefix of
+     * "person - title" is used; the rest stays "某绅士" and is left to the manual edit / LLM suggestion.
+     */
+    private fun extractNames(tags: List<String>, title: String): Pair<String, String> {
+        val candidates =
+            BRACKET_REGEX.findAll(title).mapIndexedNotNull { index, match ->
+                val raw = match.groupValues[1].trim()
+                val (circle, person) = splitCircleAndPerson(raw)
+                val name =
+                    person.takeIf { !isNoiseName(it) }
+                        ?: raw.takeIf { !isNoiseName(it) }
+                        ?: return@mapIndexedNotNull null
+
+                val tagScore =
+                    when {
+                        tags.any { it.equals(name, ignoreCase = true) } -> 6
+                        tags.any { it.length > 1 && name.contains(it, ignoreCase = true) } -> 3
+                        else -> 0
+                    }
+                val score =
+                    tagScore +
+                        (if (circle != null && !isNoiseName(circle)) 2 else 0) +
+                        (if (CJK_REGEX.containsMatchIn(name)) 1 else 0) +
+                        (2 - index).coerceAtLeast(0)
+
+                NameCandidate(name, score, index)
+            }.sortedWith(compareByDescending<NameCandidate> { it.score }.thenBy { it.index })
+
+        // The site does not distinguish author and artist: the person is both
+        val name =
+            candidates.firstOrNull()?.name
+                ?: prefixName(title)
+                ?: leadingParenName(title)
+                ?: FALLBACK_AUTHOR
+        return name to name
     }
+
+    /** `[circle (person)]` -> circle to person; a bare `[name]` has no circle. */
+    private fun splitCircleAndPerson(raw: String): Pair<String?, String> {
+        val match = CIRCLE_AND_PERSON_REGEX.matchEntire(raw) ?: return null to raw
+        val circle = match.groupValues[1].trim()
+        return circle.ifEmpty { null } to match.groupValues[2].trim()
+    }
+
+    private fun isNoiseName(raw: String): Boolean {
+        val name = raw.trim().trim('-', '_', ' ', '　')
+        if (name.isEmpty() || name.length > MAX_NAME_LENGTH) return true
+        if (!LETTER_REGEX.containsMatchIn(name)) return true
+        if (COUNT_REGEX.matches(name)) return true
+        if (EVENT_REGEX.containsMatchIn(name)) return true
+        if (PLATFORM_REGEX.matches(name)) return true
+        if (AI_REGEX.matches(name)) return true
+        if (METADATA_KEYWORDS.any { name.contains(it, ignoreCase = true) }) return true
+
+        return preferences.authorExcludeList.any { name.contains(it, ignoreCase = true) }
+    }
+
+    // "Hana Bunny - Title", common for Patreon/Fanbox artists, when the title has no usable bracket
+    private fun prefixName(title: String): String? = TITLE_PREFIX_REGEX.find(title)?.groupValues?.get(1)?.trim()
+        ?.takeIf { !isNoiseName(it) }
+
+    // "（person）title"
+    private fun leadingParenName(title: String): String? = LEADING_PAREN_REGEX.find(title)?.groupValues?.get(1)?.trim()
+        ?.takeIf { !isNoiseName(it) }
+
+    private class NameCandidate(
+        val name: String,
+        val score: Int,
+        val index: Int,
+    )
 
     private suspend fun chaptersParse(document: Document, manga: SManga): List<SChapter> {
         val lastPage = document.select("div.f_left.paginator a[href]")
@@ -429,10 +466,30 @@ abstract class WNACG :
         private val chapterDateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd")
         private val chapterZone = ZoneId.of("Asia/Taipei")
 
-        // Author extraction from title bracket patterns
-        private val PRIORITY_REGEXES = listOf(
-            Regex("""\[(.*?)]"""),
+        // Names: only [] / 【】 groups carry them, a parenthesised part inside one is the person and the
+        // part before it the circle ("[サークル (作者)]")
+        private val BRACKET_REGEX = Regex("""[\[【]([^\]】]{1,80})[\]】]""")
+        private val CIRCLE_AND_PERSON_REGEX = Regex("""^(.*?)[（(]([^（）()]{1,40})[)）]$""")
+        private val TITLE_PREFIX_REGEX = Regex("""^([^\-–—:：\[\]【】()（）]{2,30}?)\s+[-–—]\s+\S""")
+        private val LEADING_PAREN_REGEX = Regex("""^[（(]([^（）()]{2,40})[)）]""")
+        private const val MAX_NAME_LENGTH = 40
+        private const val FALLBACK_AUTHOR = "某绅士"
+        private val LETTER_REGEX = Regex("""\p{L}""")
+        private val CJK_REGEX = Regex("""[\u3040-\u30ff\u4e00-\u9fff]""")
+
+        // Release metadata, scanner groups and platforms leak into the brackets; none of them is a person
+        private val METADATA_KEYWORDS = listOf(
+            "汉化", "漢化", "翻訳", "翻译", "翻譯", "机翻", "機翻", "重嵌", "嵌字", "修图", "修圖", "自翻",
+            "上色", "全彩", "カラー", "中文", "中譯", "中译", "掃圖", "扫图", "魔改", "無修正", "无修正",
+            "DL版", "電子版", "电子版", "成年", "同人誌", "サークル", "AI生成", "AI Generated", "Patreon",
+            "Fanbox", "Fantia", "BOOTH", "DLsite", "Pixiv", "Twitter", "R-18", "雜誌", "杂志", "短編集",
+            "総集編", "合集", "日語", "日语",
         )
+        private val COUNT_REGEX = Regex("""^\d+\s*[pP页頁]?$""")
+        private val EVENT_REGEX = Regex("""^(?:c\d{2,3}|comic1|comiket|例大祭|コミティア|mjk-|fancy|melon)""", RegexOption.IGNORE_CASE)
+        private val PLATFORM_REGEX = Regex("""^(?:patreon|fanbox|fantia|booth|dlsite|pixiv|twitter|ci-en|cien)$""", RegexOption.IGNORE_CASE)
+        private val AI_REGEX = Regex("""^(?:ai|ai生成|ai generated|ai翻译|ai彩色|ai上色)$""", RegexOption.IGNORE_CASE)
+
         private val ONLY_ALPHA_REGEX = Regex("^[a-zA-Z]$")
         private val ONLY_NUMBER_REGEX = Regex("""^\d+$""")
         private val TAGS_FILTER_REGEX_LIST = listOf(ONLY_NUMBER_REGEX, ONLY_ALPHA_REGEX)
