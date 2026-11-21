@@ -236,8 +236,10 @@ abstract class WNACG :
      * and the title convention is `[circle (person)]` for doujin, `[person]` otherwise.
      *
      * A parenthesis outside a bracket is the parody or the original work ("(オリジナル)", "(Fate)"), not a
-     * person, so only bracket groups are candidates. When no bracket carries a name the prefix of
-     * "person - title" is used; the rest stays "某绅士" and is left to the manual edit / LLM suggestion.
+     * person, so only bracket groups are candidates. The circle is what a doujin is recognised by, so the
+     * author keeps the whole `circle (person)`; the artist is the person alone. When no bracket carries a
+     * name the prefix of "person - title" is used; the rest stays "某绅士" and is left to the manual edit /
+     * LLM pass.
      */
     private fun extractNames(tags: List<String>, title: String): Pair<String, String> {
         val candidates =
@@ -248,6 +250,7 @@ abstract class WNACG :
                     person.takeIf { !isNoiseName(it) }
                         ?: raw.takeIf { !isNoiseName(it) }
                         ?: return@mapIndexedNotNull null
+                val hasCircle = circle != null && !isNoiseName(circle)
 
                 val tagScore =
                     when {
@@ -257,20 +260,17 @@ abstract class WNACG :
                     }
                 val score =
                     tagScore +
-                        (if (circle != null && !isNoiseName(circle)) 2 else 0) +
+                        (if (hasCircle) 2 else 0) +
                         (if (CJK_REGEX.containsMatchIn(name)) 1 else 0) +
                         (2 - index).coerceAtLeast(0)
 
-                NameCandidate(name, score, index)
+                NameCandidate(if (hasCircle) raw else name, name, score, index)
             }.sortedWith(compareByDescending<NameCandidate> { it.score }.thenBy { it.index })
 
-        // The site does not distinguish author and artist: the person is both
-        val name =
-            candidates.firstOrNull()?.name
-                ?: prefixName(title)
-                ?: leadingParenName(title)
-                ?: FALLBACK_AUTHOR
-        return name to name
+        candidates.firstOrNull()?.let { best -> return best.author to best.artist }
+
+        val fallback = prefixName(title) ?: leadingParenName(title) ?: FALLBACK_AUTHOR
+        return fallback to fallback
     }
 
     /** `[circle (person)]` -> circle to person; a bare `[name]` has no circle. */
@@ -302,7 +302,8 @@ abstract class WNACG :
         ?.takeIf { !isNoiseName(it) }
 
     private class NameCandidate(
-        val name: String,
+        val author: String,
+        val artist: String,
         val score: Int,
         val index: Int,
     )
